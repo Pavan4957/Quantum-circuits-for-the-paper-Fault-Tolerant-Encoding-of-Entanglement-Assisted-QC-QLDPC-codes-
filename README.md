@@ -177,29 +177,8 @@ by the original two-qudit gate count, duplicate states are merged, and ties are 
 
 ## Citation
 
-If you use this code or the circuits, please cite the paper:
-
-```bibtex
-@article{EAQCQLDPC_encoding,
-  title   = {Fault-Tolerant Encoding of Entanglement-Assisted QC-QLDPC Codes},
-  author  = {},
-  journal = {},
-  year    = {}
-}
-```
-
-and, for the methods used for comparison,
-
 * P. J. Nadkarni and S. S. Garani, "Encoding of nonbinary entanglement-unassisted and assisted stabilizer codes,"
   *IEEE Trans. Quantum Eng.*, vol. 2, pp. 1–22, 2021.
 * A. Sodhani, P. Kumar, S. S. Garani and K. K. Parhi, "Optimizing encoder circuits of entanglement-assisted
   quantum LDPC codes via beam search," *IEEE Trans. Circuits Syst. II: Express Briefs*, vol. 73, no. 11,
   pp. 1159–1163, 2026.
-
-## License
-
-Add a license of your choice (e.g. MIT) in a `LICENSE` file.
-
-## Contact
-
-For questions, please open an issue in this repository.
