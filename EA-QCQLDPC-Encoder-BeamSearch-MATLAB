@@ -1,0 +1,549 @@
+function run_example_9_4_F5_proposed_beam()
+%RUN_EXAMPLE_9_4_F5_PROPOSED_BEAM  Proposed + Beam: proposed encoder of the [[9,4;1]]_5 code,
+%   followed by beam-search optimisation of its ADD gates (Sodhani et al., IEEE TCAS-II 2026,
+%   extended from GF(2) to GF(p)).  Single self-contained file:
+%   q = 5, r = 3, P(0) = diag{1,2,4}, H1 = [P(0) P(2) P(1)], H2 = [P(0) P(1) P(2)].
+%   Save this file as run_example_9_4_F5_proposed_beam.m (the file name must match) and run:
+%       >> run_example_9_4_F5_proposed_beam
+%   In the gate output, F* denotes the inverse DFT F^dagger.
+% ---------------- input from the example ----------------
+p  = 5;                   % field F_5
+r  = 3;                   % circulant size
+a  = [1 2 4];             % diagonal of P(0)
+E1 = [0 2 1];             % H1 = [P(0) P(2) P(1)]   (one row per block-row)
+E2 = [0 1 2];             % H2 = [P(0) P(1) P(2)]
+SHIFT = 'row';            % 'row'   : P(i) = each row of P(0) shifted i positions to the right
+                          %           (P(i) = P(0)*S^i, the definition in the paper)
+                          % 'column': P(i) = S^i*P(0)   (alternative convention)
+WIDTHS = [1 10 50];       % beam widths tried by the beam-search optimisation
+TCAP   = 120;             % time cap (s) per beam run
+% ---------------------------------------------------------
+for i = 0:r-1
+    fprintf('P(%d) =\n', i); disp(P_matrix(i, a, r, SHIFT));
+end
+H1 = mod(block_matrix(E1, a, r, SHIFT), p);
+H2 = mod(block_matrix(E2, a, r, SHIFT), p);
+disp('H1 = '); disp(H1);
+disp('H2 = '); disp(H2);
+fprintf('rank(H1) = %d, rank(H2) = %d, rank(H1*H2^T) = %d\n', ...
+        gf_rank(H1, p), gf_rank(H2, p), gf_rank(mod(H1 * H2.', p), p));
+% extended stabilizer matrices [H1 | -Dx], [H2 | Dz] in standard form
+[Hx, Hz, n, c, perm] = standard_form(H1, H2, p);
+N  = n + c;
+r1 = size(Hx, 1);
+K  = n - gf_rank(H1, p) - gf_rank(H2, p) + c;
+fprintf('code [[%d,%d;%d]]_%d\n', n, K, c, p);
+disp('Extended matrices after Gaussian elimination and column reordering');
+disp('(these are NOT H1 and H2; the last column is the receiver e-dit):');
+fprintf('column order (new -> original): %s\n', mat2str(perm));
+disp('Hx = '); disp(Hx);
+disp('Hz = '); disp(Hz);
+% proposed decoder D = U_H U_4 U_3 U_2 U_1 and encoder E = D^dagger
+[Dec, info] = proposed_decoder(Hx, Hz, n, c, p, r1+1:n-c-K);
+Enc = invert_circuit(Dec, p);
+% verification by stabilizer-tableau simulation
+T0 = zeros(size(Hx, 1) + size(Hz, 1), 2 * N);
+T0(1:size(Hx, 1), 1:N) = Hx;
+T0(size(Hx, 1)+1:end, N+1:end) = Hz;
+init = initial_stabilizers(info.ancillas, n, c, p);
+assert(same_rowspace(run_circuit(Enc, init, N, p), T0, p), 'encoder check failed');
+disp('encoder verified');
+% gate counts, gate list and circuit
+s = gate_counts(Enc, N);
+fprintf('ADD %d, MUL %d, DFT %d, total %d, two-qudit depth %d\n', ...
+        s.ADD, s.MUL, s.DFT, s.total, s.depth);
+fprintf('ancillas: %s, information qudits: %s\n', mat2str(info.ancillas), mat2str(info.logical));
+fprintf('column order (new -> original): %s\n', mat2str(perm));
+fprintf('encoder: %s\n', gate_string(Enc, p));
+try
+    draw_circuit(Enc, n, c, p, info.ancillas, 'ex_9_4_F5_proposed.pdf', ...
+                 'Proposed encoder of the [[9,4;1]]_5 code');
+    disp('circuit saved to ex_9_4_F5_proposed.pdf');
+catch err
+    warning('drawing failed (%s); the gate counts above are still valid.', err.message);
+end
+% ---------------- beam-search optimisation ----------------
+[DecB, binfo] = beam_optimize(Dec, N, p, WIDTHS, TCAP);
+EncB = invert_circuit(DecB, p);
+assert(same_rowspace(run_circuit(EncB, init, N, p), T0, p), 'beam: encoder check failed');
+disp('beam-optimised encoder verified');
+for b = 1:numel(binfo)
+    if isnan(binfo(b).after)
+        fprintf('  block %d: %d two-qudit gates, no decomposition found (kept)\n', b, binfo(b).before);
+    else
+        fprintf('  block %d: %d -> %d two-qudit gates (beam width %d)\n', b, binfo(b).before, binfo(b).after, binfo(b).w);
+    end
+end
+sB = gate_counts(EncB, N);
+before2q = s.ADD + 3 * s.SWAP; after2q = sB.ADD + 3 * sB.SWAP;
+fprintf('%s + Beam: ADD %d, MUL %d, DFT %d, SWAP %d, total %d, two-qudit depth %d\n', ...
+        'Proposed', sB.ADD, sB.MUL, sB.DFT, sB.SWAP, sB.total, sB.depth);
+fprintf('two-qudit gate reduction (SWAP = 3 ADD): %d -> %d (%.1f%%)\n', ...
+        before2q, after2q, 100 * (before2q - after2q) / before2q);
+fprintf('optimised encoder: %s\n', gate_string(EncB, p));
+try
+    draw_circuit(EncB, n, c, p, info.ancillas, 'ex_9_4_F5_proposed_beam.pdf', ...
+                 'Proposed + beam-search encoder of the [[9,4;1]]_5 code');
+    disp('circuit saved to ex_9_4_F5_proposed_beam.pdf');
+catch err
+    warning('drawing failed (%s); the gate counts above are still valid.', err.message);
+end
+end
+% =======================================================================
+% Proposed encoding strategy (written without nested functions)
+% =======================================================================
+function [G, info] = proposed_decoder(Hx, Hz, n, c, p, keep)
+%PROPOSED_DECODER  Decoder D = U_H U_4 U_3 U_2 U_1 of the proposed encoding strategy over F_p.
+%   The encoder is E = D^dagger = invert_circuit(G, p).  Rows of G are gates [type a b v]
+%   (see apply_gate).  Scaled additions are realised as M_{1/l} ADD M_l.
+r1 = size(Hx, 1); r2 = size(Hz, 1); N = n + c;
+T = zeros(r1 + r2, 2 * N);
+T(1:r1, 1:N) = Hx; T(r1+1:end, N+1:end) = Hz;
+G = zeros(0, 4);
+Zpart = @(T) T(r1+1:end, N+1:end);
+% Step 1 (U_1): clear H(a1) with M_gamma + ADD, set H(e1) to D(x)
+for i = 1:r1
+    for t = r1+1:n-c
+        h = T(i, t);
+        if h ~= 0
+            mu = mod(-gf_inv(h, p), p);
+            if mu ~= 1, [T, G] = app(T, G, [2 t mu 0], N, p); end
+            [T, G] = app(T, G, [1 i t 1], N, p);
+        end
+    end
+    for e = 1:c
+        target = mod(-T(i, n + e), p);
+        [T, G] = sadd(T, G, i, n - c + e, target - T(i, n - c + e), N, p);
+    end
+end
+% Step 2 (U_2): zero the dependent columns of B
+B = Zpart(T); B = B(:, 1:r1); basis = [];
+for j = 1:r1
+    if gf_rank(B(:, [basis j]), p) > numel(basis), basis(end+1) = j; end %#ok<AGROW>
+end
+dep = setdiff(1:r1, basis);
+for j = dep
+    lam = gf_solve(B(:, basis), B(:, j), p);
+    for b = 1:numel(basis), [T, G] = sadd(T, G, j, basis(b), lam(b), N, p); end
+end
+% Step 3 (U_3): transmitter e-dit columns of Hz -> D(z)
+for e = 1:c
+    Zm = Zpart(T);
+    lam = gf_solve(Zm(:, basis), mod(Zm(:, n - c + e) - Zm(:, n + e), p), p);
+    assert(~isempty(lam), 'Step 3 not solvable');
+    for b = 1:numel(basis), [T, G] = sadd(T, G, n - c + e, basis(b), lam(b), N, p); end
+end
+% Step 4 (U_4): clear the information columns of H(a2)
+na = n - r1 - c;
+K = n - gf_rank(Hx(:, 1:n), p) - gf_rank(Hz(:, 1:n), p) + c;
+nk = na - K; ha = r1+1:r1+na; srcs = [basis, n-c+1:n];
+Zm = Zpart(T);
+if isempty(keep)
+    keep = ha(1:nk);
+    if gf_rank(Zm(:, [srcs keep]), p) ~= r2
+        keep = [];
+        for q = ha
+            if gf_rank(Zm(:, [srcs keep q]), p) > numel(srcs) + numel(keep), keep(end+1) = q; end %#ok<AGROW>
+        end
+    end
+end
+assert(numel(keep) == nk && gf_rank(Zm(:, [srcs keep]), p) == r2, 'Step 4: ancilla selection failed');
+logq = setdiff(ha, keep);
+S = [basis, keep, n-c+1:n];
+for q = fliplr(logq)
+    Zm = Zpart(T);
+    lam = gf_solve(Zm(:, S), Zm(:, q), p);
+    assert(~isempty(lam), 'Step 4 not solvable');
+    for s = 1:numel(S), [T, G] = sadd(T, G, q, S(s), lam(s), N, p); end
+end
+% Step 5 (U_H): DFT on the dependent X-pivot qudits
+for j = dep, [T, G] = app(T, G, [3 j 0 0], N, p); end %#ok<ASGLU>
+info = struct('ancillas', sort([basis dep keep]), 'logical', logq, 'keep', keep, 'K', K, 'rB', numel(basis));
+end
+function [T, G] = app(T, G, g, N, p)
+%APP  Apply gate g to the tableau and append it to the circuit.
+T = apply_gate(T, g, N, p); G(end+1, :) = g;
+end
+function [T, G] = sadd(T, G, cn, t, lam, N, p)
+%SADD  Scaled addition ADD_lam(cn -> t), realised as M_{1/lam} ADD M_lam.
+lam = mod(lam, p);
+if lam == 0, return; end
+if lam == 1, [T, G] = app(T, G, [1 cn t 1], N, p); return; end
+[T, G] = app(T, G, [2 t gf_inv(lam, p) 0], N, p);
+[T, G] = app(T, G, [1 cn t 1], N, p);
+[T, G] = app(T, G, [2 t lam 0], N, p);
+end
+function [Hx, Hz, n, c, perm] = standard_form(H1, H2, p)
+%STANDARD_FORM  Extended matrices Hx = [I | H(a1) | H(e1) | -D(x)], Hz = [W | H(a2) | H(e2) | D(z)]
+%   with D(x) D(z)^T = H1 H2^T.  Column order: X-pivots, Z-type ancillas, information qudits,
+%   c transmitter e-dits, c receiver e-dits.  perm(new column) = original column of [H1 | D].
+n = size(H1, 2);
+T = mod(H1 * H2.', p);
+[R, piv] = gf_rref(T, p);
+c = numel(piv);
+Dx = T(:, piv); Dz = R.';
+assert(~any(any(mod(H1 * H2.' - Dx * Dz.', p))), 'extension failed');
+Hx = gf_rref([H1, mod(-Dx, p)], p);
+Hz = gf_rref([H2, Dz], p);
+[~, pv] = gf_rref(Hx(:, 1:n-c), p);
+assert(numel(pv) == size(Hx, 1), 'X-pivots must avoid the e-dit columns');
+rest = setdiff(1:n-c, pv);
+perm = [pv, rest, n-c+1:n+c];
+Hx = gf_rref(Hx(:, perm), p); Hz = Hz(:, perm);
+r1 = size(Hx, 1);
+[~, info] = proposed_decoder(Hx, Hz, n, c, p, []);
+kp = info.keep; ha = r1+1:n-c;
+order = [1:r1, kp, ha(~ismember(ha, kp)), n-c+1:n+c];
+Hx = Hx(:, order); Hz = Hz(:, order); perm = perm(order);
+end
+% =======================================================================
+% Beam-search optimisation over GF(p) (Sodhani et al., IEEE TCAS-II 2026, extended from GF(2))
+% =======================================================================
+function [G2, info] = beam_optimize(G, N, p, widths, tcap)
+%BEAM_OPTIMIZE  Beam-search optimisation of the ADD gates of a decoder circuit over F_p
+%   (extension of Sodhani et al., IEEE TCAS-II 2026, from GF(2) to GF(p)).
+%   The DFT gates are moved to the end of the circuit and kept fixed; every block of
+%   ADD/MUL/SWAP gates between them is a matrix A in GL(N,F_p), reduced to a diagonal
+%   matrix by row operations R_i <- R_i + l R_j ranked by the off-diagonal weight.
+if nargin < 4, widths = [1 10 50]; end
+if nargin < 5, tcap = 300; end
+% move the DFT gates to the end (past gates that do not touch their qudit)
+out = zeros(0, 4);
+for i = size(G, 1):-1:1
+    g = G(i, :);
+    if g(1) == 3 || g(1) == 4
+        j = 1;
+        while j <= size(out, 1) && ~gate_touches(out(j, :), g(2)), j = j + 1; end
+        out = [out(1:j-1, :); g; out(j:end, :)];
+    else
+        out = [g; out]; %#ok<AGROW>
+    end
+end
+G2 = zeros(0, 4); info = struct('before', {}, 'after', {}, 'w', {});
+seg = zeros(0, 4);
+for i = 1:size(out, 1) + 1
+    if i > size(out, 1) || out(i, 1) == 3 || out(i, 1) == 4
+        if ~isempty(seg)
+            [newseg, inf1] = optimize_block(seg, N, p, widths, tcap);
+            G2 = [G2; newseg]; info(end+1) = inf1; %#ok<AGROW>
+            seg = zeros(0, 4);
+        end
+        if i <= size(out, 1), G2 = [G2; out(i, :)]; end %#ok<AGROW>
+    else
+        seg = [seg; out(i, :)]; %#ok<AGROW>
+    end
+end
+end
+function tf = gate_touches(g, q)
+tf = g(2) == q || ((g(1) == 1 || g(1) == 5) && g(3) == q);
+end
+function A = linear_matrix(seg, N, p)
+A = eye(N);
+for i = 1:size(seg, 1)
+    g = seg(i, :);
+    switch g(1)
+        case 1, A(g(3), :) = mod(A(g(3), :) + g(4) * A(g(2), :), p);
+        case 2, A(g(2), :) = mod(g(3) * A(g(2), :), p);
+        case 5, A([g(2) g(3)], :) = A([g(3) g(2)], :);
+    end
+end
+end
+function [newseg, info] = optimize_block(seg, N, p, widths, tcap)
+A = linear_matrix(seg, N, p);
+L0 = sum(seg(:, 1) == 1) + 3 * sum(seg(:, 1) == 5);
+best = zeros(0, 3); bw = NaN; bestfound = false;
+for w = widths
+    [ops, found] = beam_search(A, p, w, L0, tcap);
+    if found && (~bestfound || size(ops, 1) < size(best, 1)), best = ops; bw = w; bestfound = true; end
+end
+if ~bestfound
+    newseg = seg; info = struct('before', L0, 'after', NaN, 'w', NaN); return;
+end
+% realise A = E_1^{-1} ... E_L^{-1} D as a circuit
+Mc = A;
+for k = 1:size(best, 1)
+    Mc(best(k, 1), :) = mod(Mc(best(k, 1), :) + best(k, 3) * Mc(best(k, 2), :), p);
+end
+D = diag(Mc); newseg = zeros(0, 4);
+for q = 1:N
+    if D(q) ~= 1, newseg(end+1, :) = [2 q D(q) 0]; end %#ok<AGROW>
+end
+for k = size(best, 1):-1:1
+    i = best(k, 1); j = best(k, 2); lam = mod(-best(k, 3), p);
+    if lam == 1 || lam == p - 1
+        newseg(end+1, :) = [1 j i lam]; %#ok<AGROW>
+    else
+        newseg = [newseg; 2 i gf_inv(lam, p) 0; 1 j i 1; 2 i lam 0]; %#ok<AGROW>
+    end
+end
+assert(isequal(linear_matrix(newseg, N, p), A), 'beam: reconstruction failed');
+info = struct('before', L0, 'after', size(best, 1), 'w', bw);
+end
+function [ops, found] = beam_search(A0, p, w, dmax, tcap)
+% returns rows [i j l] (operation R_i <- R_i + l R_j) reducing A0 to a diagonal matrix, or []
+N = size(A0, 1); t0 = tic;
+offnnz = @(M) nnz(M - diag(diag(M)));
+start = mod(A0, p); ops = zeros(0, 3); found = true;
+if offnnz(start) == 0, return; end
+found = false;
+beam = struct('M', {start}, 'S', {zeros(0, 3)}, 'h', {offnnz(start)});
+seen = containers.Map('KeyType', 'char', 'ValueType', 'logical');
+seen(key_of(start)) = true;
+BIG = 1e9;
+for depth = 1:dmax %#ok<FXUP>
+    scores = []; meta = [];
+    for b = 1:numel(beam)
+        M = beam(b).M; h = beam(b).h;
+        rownnz = sum(M ~= 0, 2) - (diag(M) ~= 0);
+        for lam = 1:p-1
+            Bm = mod(-lam * M, p); E = zeros(N);
+            for v = 0:p-1, E = E + double(M == v) * double(Bm == v).'; end
+            newdiag = mod(diag(M) + lam * M.', p);          % (i,j): M(i,i) + lam M(j,i)
+            sc = h - repmat(rownnz, 1, N) + (N - E) - (newdiag ~= 0);
+            sc(logical(eye(N))) = BIG; sc(newdiag == 0) = BIG;
+            scores = [scores; sc(:)]; %#ok<AGROW>
+            lamcost = double(lam ~= 1 && lam ~= p - 1);   % ties: prefer ADD / ADD^dagger (no MUL gates)
+            meta = [meta; b * ones(N * N, 1), lam * ones(N * N, 1), (1:N*N).', lamcost * ones(N * N, 1)]; %#ok<AGROW>
+        end
+    end
+    srt = sortrows([scores, meta(:, 4), (1:numel(scores)).']);   % deterministic tie-breaking
+    newbeam = struct('M', {}, 'S', {}, 'h', {});
+    for k = 1:size(srt, 1)
+        idx = srt(k, 3);
+        if scores(idx) >= BIG, break; end
+        b = meta(idx, 1); lam = meta(idx, 2); [i, j] = ind2sub([N N], meta(idx, 3));
+        Mn = beam(b).M; Mn(i, :) = mod(Mn(i, :) + lam * Mn(j, :), p);
+        kk = key_of(Mn);
+        if isKey(seen, kk), continue; end                     % merge duplicate states
+        seen(kk) = true;
+        Sn = [beam(b).S; i j lam];
+        if scores(idx) == 0, ops = Sn; found = true; return; end
+        newbeam(end+1) = struct('M', Mn, 'S', Sn, 'h', scores(idx)); %#ok<AGROW>
+        if numel(newbeam) >= w, break; end
+    end
+    beam = newbeam;
+    if isempty(beam) || toc(t0) > tcap, ops = zeros(0, 3); return; end
+end
+ops = zeros(0, 3);
+end
+function k = key_of(M)
+k = char(M(:).' + 48);
+end
+% =======================================================================
+% Helper functions
+% =======================================================================
+function M = P_matrix(i, a, r, mode)
+%P_MATRIX  P(i) from P(0) = diag(a) and the right circulant permutation matrix S of order r.
+%   mode 'row'    : each row of P(0) cyclically shifted i positions to the right, P(i) = P(0) S^i
+%                   (row k has the entry a(k) in column k+i, indices mod r)
+%   mode 'column' : P(i) = S^i P(0) (row k has the entry a(k+i) in column k+i)
+if nargin < 4, mode = 'row'; end
+S = circshift(eye(r), [0 1]);            % right circulant permutation matrix
+D = diag(a);
+switch mode
+    case 'row',    M = D * S^i;
+    case 'column', M = S^i * D;
+    otherwise, error('P_matrix: unknown mode');
+end
+end
+function H = block_matrix(E, a, r, mode)
+%BLOCK_MATRIX  [P(E(i,j))] for an exponent matrix E (one row per block-row).
+if nargin < 4, mode = 'row'; end
+H = [];
+for i = 1:size(E, 1)
+    row = [];
+    for j = 1:size(E, 2), row = [row, P_matrix(E(i, j), a, r, mode)]; end %#ok<AGROW>
+    H = [H; row]; %#ok<AGROW>
+end
+end
+function y = gf_inv(a, p)
+%GF_INV  Multiplicative inverse of a in the prime field F_p.
+a = mod(a, p);
+if a == 0, error('gf_inv: zero has no inverse'); end
+y = find(mod((1:p-1) * a, p) == 1, 1);
+end
+function [R, piv] = gf_rref(A, p)
+%GF_RREF  Reduced row echelon form over F_p.
+%   [R, piv] = gf_rref(A, p) returns R with only its nonzero rows and the pivot columns piv.
+A = mod(A, p); [m, n] = size(A); r = 0; piv = [];
+for c = 1:n
+    if r == m, break; end
+    rows = find(A(r+1:m, c) ~= 0, 1);
+    if isempty(rows), continue; end
+    r = r + 1; k = r + rows - 1;
+    A([r k], :) = A([k r], :);
+    A(r, :) = mod(A(r, :) * gf_inv(A(r, c), p), p);
+    for i = [1:r-1, r+1:m]
+        if A(i, c) ~= 0
+            A(i, :) = mod(A(i, :) - A(i, c) * A(r, :), p);
+        end
+    end
+    piv(end+1) = c; %#ok<AGROW>
+end
+R = A(1:r, :);
+end
+function r = gf_rank(A, p)
+%GF_RANK  Rank over F_p.
+if isempty(A), r = 0; return; end
+[~, piv] = gf_rref(A, p); r = numel(piv);
+end
+function x = gf_solve(A, b, p)
+%GF_SOLVE  One solution x of A*x = b over F_p (empty if none).
+n = size(A, 2);
+[R, piv] = gf_rref([A, b(:)], p);
+if any(piv == n + 1), x = []; return; end
+x = zeros(n, 1);
+for i = 1:numel(piv), x(piv(i)) = R(i, n + 1); end
+end
+function T = apply_gate(T, g, N, p)
+%APPLY_GATE  Conjugate every Pauli row [x | z] of the tableau T (over F_p, N qudits) by gate g.
+%   Gate rows g = [type a b v] (1-based qudit indices):
+%     type 1  ADD(a -> b) with scalar v : |x>_a|y>_b -> |x>_a|y + v x>_b   (v = 1: ADD, v = p-1: ADD^dagger)
+%     type 2  M_v on qudit a            : |x> -> |v x>
+%     type 3  DFT on qudit a            (X -> Z, Z -> X^-1)
+%     type 4  inverse DFT on qudit a
+%     type 5  SWAP(a, b)
+switch g(1)
+    case 1
+        c = g(2); t = g(3); l = g(4);
+        T(:, t) = mod(T(:, t) + l * T(:, c), p);
+        T(:, N + c) = mod(T(:, N + c) - l * T(:, N + t), p);
+    case 2
+        q = g(2);
+        T(:, q) = mod(g(3) * T(:, q), p);
+        T(:, N + q) = mod(gf_inv(g(3), p) * T(:, N + q), p);
+    case 3
+        q = g(2); x = T(:, q);
+        T(:, q) = mod(-T(:, N + q), p); T(:, N + q) = x;
+    case 4
+        q = g(2); x = T(:, q);
+        T(:, q) = T(:, N + q); T(:, N + q) = mod(-x, p);
+    case 5
+        a = g(2); b = g(3);
+        T(:, [a b]) = T(:, [b a]); T(:, [N + a, N + b]) = T(:, [N + b, N + a]);
+    otherwise
+        error('apply_gate: unknown gate type %d', g(1));
+end
+end
+function T = run_circuit(G, T, N, p)
+%RUN_CIRCUIT  Apply all gates (rows of G, in time order) to the tableau T.
+for i = 1:size(G, 1), T = apply_gate(T, G(i, :), N, p); end
+end
+function G2 = invert_circuit(G, p)
+%INVERT_CIRCUIT  Circuit of U^dagger: reversed order, every gate inverted (decoder <-> encoder).
+G2 = G(end:-1:1, :);
+for i = 1:size(G2, 1)
+    switch G2(i, 1)
+        case 1, G2(i, 4) = mod(-G2(i, 4), p);
+        case 2, G2(i, 3) = gf_inv(G2(i, 3), p);
+        case 3, G2(i, 1) = 4;
+        case 4, G2(i, 1) = 3;
+    end
+end
+end
+function ok = same_rowspace(A, B, p)
+%SAME_ROWSPACE  True if A and B generate the same row space over F_p.
+ra = gf_rank(A, p); ok = (ra == gf_rank(B, p)) && (ra == gf_rank([A; B], p));
+end
+function S = initial_stabilizers(ancillas, n, c, p)
+%INITIAL_STABILIZERS  Stabilizers of |0> on the ancillas and |Phi> = sum_x |-x>|x> on each e-dit pair.
+N = n + c; S = zeros(numel(ancillas) + 2 * c, 2 * N); r = 0;
+for q = ancillas, r = r + 1; S(r, N + q) = 1; end
+for e = 1:c
+    r = r + 1; S(r, n - c + e) = p - 1; S(r, n + e) = 1;            % X(-1) X(1)
+    r = r + 1; S(r, N + n - c + e) = 1; S(r, N + n + e) = 1;        % Z Z
+end
+end
+function s = gate_counts(G, N)
+%GATE_COUNTS  Numbers of ADD, MUL, DFT and SWAP gates, total, and ASAP two-qudit depth.
+t = G(:, 1);
+s.ADD = sum(t == 1); s.MUL = sum(t == 2); s.DFT = sum(t == 3 | t == 4); s.SWAP = sum(t == 5);
+s.total = s.ADD + s.MUL + s.DFT + s.SWAP;
+ready = zeros(1, N); d = 0;
+for i = 1:size(G, 1)
+    if t(i) == 1 || t(i) == 5
+        a = G(i, 2); b = G(i, 3);
+        e = max(ready(a), ready(b)) + 1; ready([a b]) = e; d = max(d, e);
+    end
+end
+s.depth = d;
+end
+function s = gate_string(G, p)
+%GATE_STRING  Text form of a circuit, e.g. 'ADD(1,5) M_2(6) Fdag(3)'.
+parts = cell(1, size(G, 1));
+for i = 1:size(G, 1)
+    g = G(i, :);
+    switch g(1)
+        case 1
+            if mod(g(4), p) == 1, nm = 'ADD'; elseif mod(g(4), p) == p - 1, nm = 'ADD^-1'; else, nm = sprintf('ADD_%d', g(4)); end
+            parts{i} = sprintf('%s(%d,%d)', nm, g(2), g(3));
+        case 2, parts{i} = sprintf('M_%d(%d)', g(3), g(2));
+        case 3, parts{i} = sprintf('F(%d)', g(2));
+        case 4, parts{i} = sprintf('Fdag(%d)', g(2));
+        case 5, parts{i} = sprintf('SWAP(%d,%d)', g(2), g(3));
+    end
+end
+s = strjoin(parts, ' ');
+end
+function draw_circuit(G, n, c, p, ancillas, filename, ttl)
+%DRAW_CIRCUIT  Draws the encoder circuit G (rows [type a b v]) and saves it as a PDF.
+%   ADD: control dot and box '+' (ADD) or '-' (ADD^dagger); M_g: box 'Mg'; F, F^dagger; SWAP: x--x.
+N = n + c;
+col = zeros(size(G, 1), 1); spans = {};          % ASAP layout
+for i = 1:size(G, 1)
+    g = G(i, :);
+    if g(1) == 1 || g(1) == 5, lo = min(g(2), g(3)); hi = max(g(2), g(3)); else, lo = g(2); hi = g(2); end
+    k = 1;
+    for j = 1:numel(spans)
+        sp = spans{j};
+        if any(~(sp(:, 2) < lo | sp(:, 1) > hi)), k = j + 1; end
+    end
+    if k > numel(spans), spans{k} = zeros(0, 2); end
+    spans{k}(end+1, :) = [lo hi]; col(i) = k;
+end
+W = max([col; 0]);
+fig = figure('Visible', 'off', 'Color', 'w');
+set(fig, 'Units', 'centimeters', 'Position', [1 1 max(16, 0.45*W + 4), 0.45*N + 1.5]);
+ax = axes('Parent', fig, 'Position', [0.02 0.02 0.96 0.9]);
+hold(ax, 'on'); axis(ax, 'off');
+yq = @(q) N - q;
+li = 0;
+for q = 1:N
+    line([0 W + 1], [yq(q) yq(q)], 'Color', 'k', 'LineWidth', 0.4, 'Parent', ax);
+    if q <= n - c
+        if any(ancillas == q), lab = '|0>'; else, li = li + 1; lab = sprintf('|psi_%d>', li); end
+    elseif q <= n
+        lab = sprintf('|Phi>_%d (Tx)', q - (n - c));
+    else
+        lab = sprintf('|Phi>_%d (Rx)', q - n);
+    end
+    text(-0.3, yq(q), lab, 'Parent', ax, 'Interpreter', 'none', 'HorizontalAlignment', 'right', 'FontSize', 7);
+    text(W + 1.2, yq(q), sprintf('q%d', q), 'Parent', ax, 'Interpreter', 'none', 'FontSize', 6);
+end
+for i = 1:size(G, 1)
+    g = G(i, :); x = col(i);
+    switch g(1)
+        case 1
+            line([x x], [yq(g(2)) yq(g(3))], 'Color', 'k', 'LineWidth', 0.5, 'Parent', ax);
+            line(x, yq(g(2)), 'Marker', '.', 'MarkerSize', 12, 'Color', 'k', 'Parent', ax);
+            if mod(g(4), p) == 1, lb = '+'; elseif mod(g(4), p) == p - 1, lb = '-'; else, lb = sprintf('+%d', g(4)); end
+            drawbox(ax, x, yq(g(3)), lb);
+        case 2, drawbox(ax, x, yq(g(2)), sprintf('M%d', g(3)));
+        case 3, drawbox(ax, x, yq(g(2)), 'F');
+        case 4, drawbox(ax, x, yq(g(2)), 'F*');
+        case 5
+            line([x x], [yq(g(2)) yq(g(3))], 'Color', 'k', 'LineWidth', 0.5, 'Parent', ax);
+            line([x x], [yq(g(2)) yq(g(3))], 'LineStyle', 'none', 'Marker', 'x', 'MarkerSize', 7, 'Color', 'k', 'Parent', ax);
+    end
+end
+set(ax, 'XLim', [-4 W + 2], 'YLim', [-0.5 N]);
+if nargin > 6, title(ax, ttl, 'Interpreter', 'none', 'FontSize', 8); end
+pos = get(fig, 'Position');
+set(fig, 'PaperUnits', 'centimeters', 'PaperSize', pos(3:4), 'PaperPosition', [0 0 pos(3:4)]);
+print(fig, filename, '-dpdf');
+close(fig);
+end
+function drawbox(ax, x, yy, s)
+rectangle('Position', [x-0.38, yy-0.36, 0.76, 0.72], 'FaceColor', 'w', 'EdgeColor', 'k', 'Parent', ax);
+text(x, yy, s, 'Parent', ax, 'Interpreter', 'none', 'HorizontalAlignment', 'center', 'FontSize', 6);
+end
